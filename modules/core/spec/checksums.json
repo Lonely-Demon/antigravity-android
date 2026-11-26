@@ -1,11 +1,11 @@
 {
   "archive": {
     "filename": "language_server.tar.gz",
-    "sha256": "d092b7d138cc8656372dc87ef20dfa33ee84a26cd255399d9adaed082b3dfc3f"
+    "sha256": "dd8cc971e05887e2fdab8ec7887d675f04fbd62aed1ad199d5f5789ddac46a72"
   },
   "binary": {
     "filename": "language_server",
-    "sha256": "384fd3a5a467a136c44cd32d148ec75cd165ca6fbcb8aa57166cf7c7e59421d2",
-    "size": 215438000
+    "sha256": "9bb72c71c5e52ee8d13a76b694e41618f5ebae5fb28b50ae0a1e749f57255083",
+    "size": 216421040
   }
 }
