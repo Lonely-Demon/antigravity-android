@@ -22,17 +22,11 @@ def patch_main(file_path):
         print("[web-patch] Desktop Mode toggle already present in main.js")
         return True
 
-    # 1. State hook injection pattern in Appearance component:
-    # Matches: var C=g!==3,D=g!==2,E=F=>G=>{F===t&&v(G)}; or legacy var B=f!==3,C=f!==2,D=E=>G=>{E===r&&u(G)};
-    hook_pattern = re.compile(r'(var\s+[A-Za-z0-9_$]+=[A-Za-z0-9_$]+!==3,\s*[A-Za-z0-9_$]+=[A-Za-z0-9_$]+!==2,\s*[A-Za-z0-9_$]+=[A-Za-z0-9_$]+=>\s*[A-Za-z0-9_$]+=>\{.*?\};)')
-    hook_match = hook_pattern.search(content)
-
-    # 2. JSX Theme element injection: find Theme element in Appearance
+    # 1. Locate Theme element in Appearance settings
     theme_idx = content.find('{label:"Theme"')
     theme_match = None
     react_id = "A"
     if theme_idx != -1:
-        # Search backwards within a reasonable window (e.g. 100 chars) for createElement
         window_start = max(0, theme_idx - 100)
         window_end = min(len(content), theme_idx + 500)
         window_text = content[window_start:window_end]
@@ -43,11 +37,23 @@ def patch_main(file_path):
         if theme_match:
             react_id = theme_match.group(1)
 
-    if not hook_match or not theme_match:
-        print(f"[web-patch] patterns not matched: hook={bool(hook_match)}, theme={bool(theme_match)}", file=sys.stderr)
+    if not theme_match:
+        print("[web-patch] Theme element not matched in main.js", file=sys.stderr)
         return False
 
-    orig_hook = hook_match.group(1)
+    # 2. Locate hook injection site before the Appearance return statement
+    hook_region_start = max(0, theme_idx - 500)
+    hook_region = content[hook_region_start:theme_idx]
+    ret_pattern = re.compile(
+        r'return\s+' + re.escape(react_id) + r'\.createElement\(' + re.escape(react_id) + r'\.Fragment,null,' + re.escape(react_id) + r'\.createElement\([A-Za-z0-9_$]+,\{title:"Appearance"\}'
+    )
+    ret_match = ret_pattern.search(hook_region)
+    if not ret_match:
+        print("[web-patch] Appearance return statement not matched in main.js", file=sys.stderr)
+        return False
+
+    ret_abs_pos = hook_region_start + ret_match.start()
+
     injected_hook = (
         f"var [isDesktop,setIsDesktop]=(0,{react_id}.useState)(()=>{{"
         "try{if(window.Android&&typeof window.Android.isDesktopMode==='function')return window.Android.isDesktopMode();"
@@ -55,22 +61,30 @@ def patch_main(file_path):
         f"var onDesktopToggle=(0,{react_id}.useCallback)(v=>{{"
         "setIsDesktop(v);try{localStorage.setItem('ag_desktop_mode',String(v));"
         "if(window.Android&&typeof window.Android.setDesktopMode==='function')window.Android.setDesktopMode(v)}catch(_){}},[]);"
-        + orig_hook
     )
 
-    # Detect switch and setting item components
-    # Look for setting item component used with rightElement or contrast setting
-    item_comp = "v3"
-    switch_comp = "dX"
-    re_idx = content.find('rightElement:')
-    if re_idx != -1:
-        re_window = content[max(0, re_idx - 150):min(len(content), re_idx + 150)]
-        item_m = re.search(r'([A-Za-z0-9_$]+)\.createElement\(([A-Za-z0-9_$]+),\{label:[^,]+,description:[^,]+,rightElement:', re_window)
-        if item_m:
+    # 3. Detect setting item and switch components from any rightElement switch row
+    item_comp = None
+    switch_comp = None
+    for m in re.finditer(r'rightElement:', content):
+        pos = m.start()
+        re_window = content[max(0, pos - 220):min(len(content), pos + 220)]
+        item_m = re.search(
+            r'([A-Za-z0-9_$]+)\.createElement\(([A-Za-z0-9_$]+),\{label:[^}]*?rightElement:',
+            re_window,
+        )
+        sw_m = re.search(
+            r'rightElement:[^}]*?([A-Za-z0-9_$]+)\.createElement\(([A-Za-z0-9_$]+),\{checked:',
+            re_window,
+        )
+        if item_m and sw_m:
             item_comp = item_m.group(2)
-        sw_m = re.search(r'rightElement:[A-Za-z0-9_$]+\.createElement\(([A-Za-z0-9_$]+),\{checked:', re_window)
-        if sw_m:
-            switch_comp = sw_m.group(1)
+            switch_comp = sw_m.group(2)
+            break
+
+    if not item_comp or not switch_comp:
+        item_comp = item_comp or "v3"
+        switch_comp = switch_comp or "dX"
 
     orig_theme = theme_match.group(0)
     injected_theme = (
@@ -79,13 +93,14 @@ def patch_main(file_path):
         + f'rightElement:{react_id}.createElement({switch_comp},{{checked:isDesktop,onCheckedChange:onDesktopToggle}})}})'
     )
 
-    content = content.replace(orig_hook, injected_hook, 1)
+    # Inject hook before return (ret_abs_pos < theme_idx), then replace theme element
+    content = content[:ret_abs_pos] + injected_hook + content[ret_abs_pos:]
     content = content.replace(orig_theme, injected_theme, 1)
 
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(content)
 
-    print("[web-patch] Successfully patched Desktop Mode toggle into main.js (mobile by default, English)")
+    print(f"[web-patch] Successfully patched Desktop Mode toggle into main.js (item={item_comp}, switch={switch_comp})")
     return True
 
 if __name__ == "__main__":

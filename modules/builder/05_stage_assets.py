@@ -32,23 +32,45 @@ def stage_assets(staging_dir, no_bypass=False):
     if os.path.isdir(web_src):
         web_build_script = os.path.join(web_src, "build.sh")
         if os.path.isfile(web_build_script):
-            print(f"[*] Building web bundles via {web_build_script}...")
-            subprocess.check_call(["bash", web_build_script], cwd=PROJECT_ROOT)
+            print(f"[*] Building mobile web override bundles via {web_build_script} --overlays-only...")
+            subprocess.check_call(["bash", web_build_script, "--overlays-only"], cwd=PROJECT_ROOT)
 
-        print(f"[*] Staging web assets from {web_src} -> {web_dst}...")
-        if os.path.exists(web_dst):
-            shutil.rmtree(web_dst)
-        def web_ignore(directory, files):
-            ignored = set()
-            rel_dir = os.path.relpath(directory, web_src)
-            if rel_dir == ".":
-                for name in ("main.js", "src", "tests", "build.sh", "patch_main.py", "src.manifest"):
-                    if name in files:
-                        ignored.add(name)
-            return ignored
+        core_bin = os.path.join(runtime_dst, "bin", "liblanguage_server.so")
+        extract_script = os.path.join(web_src, "extract_upstream.py")
+        override_html_script = os.path.join(web_src, "override_html.py")
+        patch_main_script = os.path.join(web_src, "patch_main.py")
 
-        shutil.copytree(web_src, web_dst, ignore=web_ignore)
-        print(f"[OK] Staged web assets.")
+        if os.path.isfile(core_bin) and os.path.isfile(extract_script):
+            print(f"[*] Extracting upstream web UI from {core_bin} -> {web_dst}...")
+            subprocess.check_call(["python3", extract_script, core_bin, web_dst], cwd=PROJECT_ROOT)
+
+            gen_src = os.path.join(web_src, "generated")
+            gen_dst = os.path.join(web_dst, "generated")
+            if os.path.isdir(gen_src):
+                shutil.copytree(gen_src, gen_dst, dirs_exist_ok=True)
+
+            print(f"[*] Applying mobile UI overrides onto upstream web bundle...")
+            subprocess.check_call(["python3", override_html_script, os.path.join(web_dst, "index.html")], cwd=PROJECT_ROOT)
+            subprocess.check_call(["python3", patch_main_script, os.path.join(web_dst, "main.js")], cwd=PROJECT_ROOT)
+
+            if shutil.which("node"):
+                subprocess.check_call(["node", "--check", os.path.join(web_dst, "main.js")])
+            print("[OK] Staged upstream web UI with mobile overrides.")
+        else:
+            print(f"[*] Staging static web assets from {web_src} -> {web_dst}...")
+            if os.path.exists(web_dst):
+                shutil.rmtree(web_dst)
+            def web_ignore(directory, files):
+                ignored = set()
+                rel_dir = os.path.relpath(directory, web_src)
+                if rel_dir == ".":
+                    for name in ("main.js", "src", "tests", "build.sh", "patch_main.py", "src.manifest", "extract_upstream.py", "override_html.py"):
+                        if name in files:
+                            ignored.add(name)
+                return ignored
+
+            shutil.copytree(web_src, web_dst, ignore=web_ignore)
+            print("[OK] Staged web assets.")
 
     env_src = os.path.join(PROJECT_ROOT, "env", "dist", "env")
     env_dst = os.path.join(assets_dir, "env")

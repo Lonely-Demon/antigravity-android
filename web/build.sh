@@ -18,6 +18,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="$SCRIPT_DIR/src.manifest"
 GEN_DIR="$SCRIPT_DIR/generated"
 
+OVERLAYS_ONLY=0
+for arg in "$@"; do
+    case "$arg" in
+        --overlays-only) OVERLAYS_ONLY=1 ;;
+    esac
+done
+
 die() { printf 'build.sh: %s\n' "$*" >&2; exit 1; }
 
 [ -f "$MANIFEST" ] || die "manifest not found: $MANIFEST"
@@ -149,12 +156,14 @@ emit_bundle
 
 [ "${#bundle_names[@]}" -gt 0 ] || die "no bundles emitted"
 
-# Patch only a staged copy: never dirty the checked-in upstream main.js.
-[ -f "$SCRIPT_DIR/main.js" ] || die "main.js not found"
-[ -f "$SCRIPT_DIR/patch_main.py" ] || die "patch_main.py not found"
-cp -f "$SCRIPT_DIR/main.js" "$GEN_DIR/main.js"
-python3 "$SCRIPT_DIR/patch_main.py" "$GEN_DIR/main.js" \
-    || die "web/patch_main.py failed"
+if [ "$OVERLAYS_ONLY" -eq 0 ]; then
+    # Patch only a staged copy: never dirty the checked-in upstream main.js.
+    [ -f "$SCRIPT_DIR/main.js" ] || die "main.js not found"
+    [ -f "$SCRIPT_DIR/patch_main.py" ] || die "patch_main.py not found"
+    cp -f "$SCRIPT_DIR/main.js" "$GEN_DIR/main.js"
+    python3 "$SCRIPT_DIR/patch_main.py" "$GEN_DIR/main.js" \
+        || die "web/patch_main.py failed"
+fi
 
 printf 'web: generated %d bundle(s) from %d fragment(s)\n' \
     "${#bundle_names[@]}" "$src_count"
@@ -176,7 +185,9 @@ if command -v node >/dev/null 2>&1; then
         fi
         i=$((i + 1))
     done
-    node --check "$GEN_DIR/main.js" || die "node --check failed: generated/main.js"
+    if [ "$OVERLAYS_ONLY" -eq 0 ]; then
+        node --check "$GEN_DIR/main.js" || die "node --check failed: generated/main.js"
+    fi
 else
     printf 'node not found; skipped node --check\n'
 fi
